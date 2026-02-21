@@ -1,4 +1,4 @@
-module COSMORSexity
+module COSMORS
 
 using LinearAlgebra
 using Statistics

@@ -1,20 +1,85 @@
 using MoleculeFlow
 using LinearAlgebra
-
+using Statistics
 
 function generate_conformers(state::MolecularState;
-                             nconfs=100)
+                             nconfs::Int = 100,
+                             optimize::Bool = true,
+                             force_field::Symbol = :mmff,
+                             random_seed::Union{Nothing,Int} = nothing,
+                             rms_threshold::Float64 = 0.5,
+                             energy_window_kJmol::Union{Nothing,Float64} = nothing)
 
-    mol = MoleculeFlow.from_smiles(state.smiles)
-    mol3d = MoleculeFlow.embed(mol)
+    mol = mol_from_smiles(state.smiles)
 
-    conformers = MoleculeFlow.generate_conformers(
-        mol3d;
-        n_conformers=nconfs,
-        method=:etkdg
+    @assert mol.valid "Invalid SMILES for state $(state.name)"
+
+    conformers = generate_3d_conformers(
+        mol,
+        nconfs;
+        optimize = optimize,
+        force_field = force_field,
+        random_seed = random_seed
     )
 
-    return conformers
+    converted = Conformer[]
+
+    for conf in conformers
+
+        coords_full = conf.molecule.props[:coordinates_3d]
+
+        # Get heavy atoms only (since get_atoms excludes hydrogens)
+        atoms = get_atoms(conf.molecule)
+
+        heavy_indices = Int[]
+        atomic_numbers = Int[]
+
+        for (i, atom) in enumerate(atoms)
+            Z = get_atomic_number(atom)
+            if Z != 1
+                push!(heavy_indices, i)
+                push!(atomic_numbers, Z)
+            end
+        end
+
+        # Extract heavy atom coordinates
+        coords = coords_full[heavy_indices, :]
+
+        # Convert kcal/mol → J/mol
+        energy_kcal = conf.conformer_result.energy
+        energy = energy_kcal * 4184.0
+
+        push!(converted,
+            Conformer(
+                coords,
+                atomic_numbers,
+                energy,
+                nothing
+            )
+        )
+    end
+
+        # --- Energy window filter (optional) ---
+    if energy_window_kJmol !== nothing
+        energies = [c.energy for c in converted]
+        Emin = minimum(energies)
+        window_J = energy_window_kJmol * 1000.0
+
+        converted = [
+            c for c in converted
+            if (c.energy - Emin) <= window_J
+        ]
+    end
+
+    # --- RMS pruning ---
+    if rms_threshold > 0
+        converted = prune_by_rms(
+            converted;
+            threshold = rms_threshold
+        )
+    end
+
+    return converted
 end
 
 function filter_energy_window(conformers;
@@ -34,25 +99,19 @@ end
 Compute optimal RMSD after Kabsch alignment.
 P and Q are (n_atoms × 3).
 """
-function rmsd(P::Matrix{Float64},
-              Q::Matrix{Float64})
-
+function rmsd(P::Matrix{Float64}, Q::Matrix{Float64})
     @assert size(P) == size(Q)
 
-    # Center coordinates
     Pc = P .- mean(P, dims=1)
     Qc = Q .- mean(Q, dims=1)
 
-    # Covariance matrix
     C = Pc' * Qc
-
     U, _, V = svd(C)
 
     d = sign(det(V * U'))
     D = Diagonal([1.0, 1.0, d])
 
     R = V * D * U'
-
     P_rot = Pc * R
 
     diff = P_rot - Qc
@@ -85,26 +144,17 @@ Remove redundant conformers using RMS threshold (Å).
 Returns pruned conformer vector.
 """
 function prune_by_rms(conformers::Vector{Conformer};
-                      threshold::Float64 = 0.5,
-                      heavy_only::Bool = true)
+                      threshold::Float64 = 0.5)
 
-    # Sort by energy
-    sorted = sort(conformers, by=c->c.energy)
+    sorted = sort(conformers, by = c -> c.energy)
 
     kept = Conformer[]
 
     for conf in sorted
-
-        coords_i = select_atoms(conf; heavy_only=heavy_only)
-
         keep_flag = true
 
         for kept_conf in kept
-
-            coords_j = select_atoms(kept_conf;
-                                    heavy_only=heavy_only)
-
-            r = rmsd(coords_i, coords_j)
+            r = rmsd(conf.coordinates, kept_conf.coordinates)
 
             if r < threshold
                 keep_flag = false

@@ -18,7 +18,7 @@ export MolecularState,
 include("types.jl")
 include("states.jl")
 include("conformers.jl")
-include("orca_runner.jl")
+include("orca_manager.jl")
 include("sigma_parser.jl")
 include("sigma_profile.jl")
 include("boltzmann.jl")

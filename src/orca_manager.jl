@@ -21,13 +21,21 @@ function write_orca_input(
 
     open(filepath, "w") do io
 
-        println(io, "%pal nprocs $(settings.nprocs) end")
         println(io, "%maxcore $(settings.maxcore)")
-        println(io)
 
+        if settings.nprocs > 1
+            println(io, "%pal nprocs $(settings.nprocs) end")
+        end
+
+        println(io)
         println(io,
-            "! $(settings.method) $(settings.basis) ",
-            "CPCM($(settings.solvent)) TightSCF")
+            "! $(settings.method) $(settings.basis) CPCM($(settings.solvent)) TightSCF")
+
+        # ---- THIS IS CRITICAL ----
+        println(io)
+        println(io, "%cpcm")
+        println(io, "   writemos true")
+        println(io, "end")
 
         println(io)
         println(io, "* xyz $charge $multiplicity")
@@ -46,12 +54,18 @@ end
 # Run orca
 function run_orca_job(input_file::String)
 
-    cmd = `orca $input_file`
+    path_to_orca = "/home/analima/Downloads/orca-6.1.0-f.0_linux_x86-64_openmpi41/orca-6.1.0-f.0_linux_x86-64/bin/orca"
 
-    try
-        run(cmd)
-    catch e
-        error("ORCA execution failed for $input_file")
+    job_dir = dirname(input_file)
+    input_name = basename(input_file)
+
+    output_name = replace(input_name, ".inp" => ".out")
+
+    base_cmd = Cmd([path_to_orca, input_name])
+    cmd = Cmd(base_cmd; dir=job_dir)
+
+    open(joinpath(job_dir, output_name), "w") do io
+        run(pipeline(cmd, stdout=io, stderr=io))
     end
 end
 

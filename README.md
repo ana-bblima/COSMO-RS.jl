@@ -12,9 +12,6 @@ The package is designed for:
 - COSMO-RS preparation workflows
 - Activity coefficient prediction in mixed solvents (e.g. water/urea/TMAO)
 
-This package focuses on *physically rigorous statistical mechanics* and
-clean reproducible computational workflows.
-
 ---
 
 ## Scientific Scope
@@ -66,17 +63,6 @@ Many COSMO workflows:
 This package addresses those limitations.
 
 ---
-
-
-## My Physical Assumptions:
-- Energies must be computed in the same dielectric environment
-used for COSMO surfaces.
-
-- Gas-phase conformer energies should not be mixed with CPCM energies.
-
-- Segment smoothing radius default: r_av = 0.5 Å
-
-- RMS pruning default: 0.5 Å (heavy atoms)
 
 ## Planned Features
 

@@ -22,28 +22,19 @@ function generate_conformers(state::MolecularState;
         random_seed = random_seed
     )
 
+    # Get atomic numbers for all atoms including H
+    mol_with_h = add_hs(mol)
+    atoms_all = get_atoms(mol_with_h)
+    all_atomic_numbers = [get_atomic_number(a) for a in atoms_all]
+
     converted = Conformer[]
 
     for conf in conformers
 
+        # coordinates_3d includes all atoms (including H)
         coords_full = conf.molecule.props[:coordinates_3d]
 
-        # Get heavy atoms only (since get_atoms excludes hydrogens)
-        atoms = get_atoms(conf.molecule)
-
-        heavy_indices = Int[]
-        atomic_numbers = Int[]
-
-        for (i, atom) in enumerate(atoms)
-            Z = get_atomic_number(atom)
-            if Z != 1
-                push!(heavy_indices, i)
-                push!(atomic_numbers, Z)
-            end
-        end
-
-        # Extract heavy atom coordinates
-        coords = coords_full[heavy_indices, :]
+        @assert size(coords_full, 1) == length(all_atomic_numbers) "Coordinate/atom count mismatch: $(size(coords_full,1)) coords vs $(length(all_atomic_numbers)) atoms"
 
         # Convert kcal/mol → J/mol
         energy_kcal = conf.conformer_result.energy
@@ -51,8 +42,8 @@ function generate_conformers(state::MolecularState;
 
         push!(converted,
             Conformer(
-                coords,
-                atomic_numbers,
+                coords_full,
+                all_atomic_numbers,
                 energy,
                 nothing
             )

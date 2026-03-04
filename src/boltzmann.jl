@@ -1,4 +1,4 @@
-const R_gas = 8.314  # J/mol/K
+const R_gas = 8.314e-3  # kJ/(mol·K)
 
 function boltzmann_weights(energies;
                            T=298.15)
@@ -113,4 +113,152 @@ function average_over_states(
     end
 
     return total_profile
+end
+
+
+############
+# pH-DEPENDENT POPULATION WEIGHTING
+############
+
+"""
+    polyprotic_fractions(pKa_values, pH)
+
+Compute macroscopic protonation-level fractions for a polyprotic acid.
+
+Given `n` sorted (ascending) pKa values, returns a vector of `n+1` fractions:
+- `fractions[1]`   = fully protonated (0 protons removed)
+- `fractions[j+1]` = `j` protons removed
+- `fractions[n+1]` = fully deprotonated
+
+Uses the standard polyprotic acid dissociation formalism:
+
+    H_n A  ⇌  H_{n-1}A⁻ + H⁺      Ka₁
+    H_{n-1}A⁻  ⇌  H_{n-2}A²⁻ + H⁺  Ka₂
+    ...
+
+The fraction at level j (j protons removed) is:
+
+    α_j = (Ka₁·Ka₂·...·Ka_j / [H⁺]^j) / Z
+
+where Z = Σ_j α_j (unnormalized).
+"""
+function polyprotic_fractions(pKa_values::Vector{Float64}, pH::Float64)
+    n = length(pKa_values)
+    H = 10.0^(-pH)
+
+    # terms[j+1] = Π_{k=1}^{j} Ka_k / H^j
+    terms = zeros(n + 1)
+    terms[1] = 1.0  # fully protonated reference
+
+    cumulative_Ka = 1.0
+    for j in 1:n
+        cumulative_Ka *= 10.0^(-pKa_values[j])
+        terms[j + 1] = cumulative_Ka / H^j
+    end
+
+    Z = sum(terms)
+    return terms ./ Z
+end
+
+
+"""
+    state_population_weights_pH(ensembles, pKa_values, pH;
+                                charge_fully_deprotonated, T=298.15)
+
+Compute pH-dependent state population weights.
+
+Combines polyprotic acid equilibria (for macroscopic protonation levels)
+with Boltzmann weighting of tautomers/conformers within each level.
+
+Each state is assigned to a protonation level based on:
+
+    n_protons = state.charge - charge_fully_deprotonated
+    protons_removed = n_ionizable - n_protons
+
+States at the same protonation level are tautomers; their relative
+populations are determined by their conformer-averaged free energies.
+
+Returns normalized weights (one per ensemble).
+"""
+function state_population_weights_pH(
+        ensembles::Vector{StateEnsemble},
+        pKa_values::Vector{Float64},
+        pH::Float64;
+        charge_fully_deprotonated::Int,
+        T::Float64 = 298.15)
+
+    n_ionizable = length(pKa_values)
+
+    # Macrostate fractions from pKa
+    fractions = polyprotic_fractions(pKa_values, pH)
+
+    n_states = length(ensembles)
+    weights = zeros(n_states)
+
+    # Group states by protonation level and assign weights
+    for j_removed in 0:n_ionizable
+
+        # Find ensembles at this protonation level
+        level_indices = Int[]
+        for (idx, e) in enumerate(ensembles)
+            n_protons = e.state.charge - charge_fully_deprotonated
+            if n_ionizable - n_protons == j_removed
+                push!(level_indices, idx)
+            end
+        end
+
+        isempty(level_indices) && continue
+
+        # Boltzmann weight tautomers within this level by their free energies
+        G_tautomers = [state_free_energy(ensembles[idx].conformers; T=T)
+                       for idx in level_indices]
+        tautomer_weights = boltzmann_weights(G_tautomers; T=T)
+
+        # Distribute the macrostate fraction among tautomers
+        for (k, idx) in enumerate(level_indices)
+            weights[idx] = fractions[j_removed + 1] * tautomer_weights[k]
+        end
+    end
+
+    # Renormalize (accounts for protonation levels with no states)
+    total = sum(weights)
+    if total > 0
+        weights ./= total
+    end
+
+    return weights
+end
+
+
+"""
+    state_population_weights_pH(ensembles, amino_acid_name, pH; T=298.15)
+
+Convenience method using built-in amino acid pKa data from `AMINO_ACID_PKA`.
+
+Accepts full names ("glycine"), three-letter codes ("gly"),
+or one-letter codes ("G"). Lookup is case-insensitive.
+"""
+function state_population_weights_pH(
+        ensembles::Vector{StateEnsemble},
+        amino_acid_name::String,
+        pH::Float64;
+        T::Float64 = 298.15)
+
+    key = lowercase(strip(amino_acid_name))
+
+    if haskey(AMINO_ACID_THREE_TO_FULL, key)
+        key = AMINO_ACID_THREE_TO_FULL[key]
+    elseif haskey(AMINO_ACID_ONE_TO_FULL, key)
+        key = AMINO_ACID_ONE_TO_FULL[key]
+    end
+
+    if !haskey(AMINO_ACID_PKA, key)
+        error("pKa data not found for '$amino_acid_name'. " *
+              "Available: $(join(sort(collect(keys(AMINO_ACID_PKA))), ", "))")
+    end
+
+    pKa_data = AMINO_ACID_PKA[key]
+    return state_population_weights_pH(
+        ensembles, pKa_data.pKa_values, pH;
+        charge_fully_deprotonated=pKa_data.charge_fully_deprotonated, T=T)
 end

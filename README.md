@@ -1,6 +1,6 @@
 # COSMO-RS.jl
 
-COSMO-RS.jl is a in development Julia package for generating COSMO-based sigma profiles
+COSMO-RS.jl is an in-development Julia package for generating COSMO-based sigma profiles
 and performing multi-state, multi-conformer thermodynamic averaging
 for amino acids in solution.
 
@@ -19,12 +19,15 @@ The package is designed for:
 This package implements:
 
 1. Multi-state molecular ensembles (neutral, zwitterion, protonated, etc.)
-2. Conformer generation (MoleculeFlow)
-3. RMS pruning with Kabsch alignment
-4. ORCA automation for COSMO surface generation
+2. Conformer generation (MoleculeFlow) with RMS pruning and Kabsch alignment
+3. ORCA automation for COSMO surface generation with COPT fallback
+4. `.orcacosmo` file assembly and parsing (including CPCM-corrected charges)
 5. Gaussian sigma averaging (standard COSMO-RS preprocessing)
-6. Boltzmann conformer weighting
-7. State-level free energy weighting
+6. Sigma profile computation via linear interpolation binning
+7. Sigma moments (0th-6th order) with hydrogen-bond donor/acceptor decomposition
+8. Boltzmann conformer weighting
+9. State-level free energy weighting
+10. pH-dependent protonation weighting via polyprotic acid equilibria
 
 The thermodynamic model used is:
 
@@ -36,9 +39,16 @@ State free energy:
 
 G_s = −RT ln(Z_s)
 
-State population:
+State population (energy-only):
 
 W_s = exp(−G_s/RT) / Σ_s' exp(−G_s'/RT)
+
+pH-dependent state population:
+
+W_s = α_j(pH) × w_s|j
+
+where α_j is the macroscopic protonation fraction from polyprotic pKa equilibria
+and w_s|j is the Boltzmann weight among tautomers at the same protonation level.
 
 Total sigma profile:
 
@@ -66,10 +76,6 @@ This package addresses those limitations.
 
 ## Planned Features
 
-- PH-dependent protonation weighting
-- Hydrogen-bond sigma moments
-
-In a not so near future:
-- Parallel ORCA job management 
-- Multi-component mixture modeling 
-- Activity coefficient calculation (γᵢ) - I wish :D 
+- Parallel ORCA job management
+- Multi-component mixture modeling
+- Activity coefficient calculation

@@ -210,8 +210,7 @@ function state_population_weights_pH(
         isempty(level_indices) && continue
 
         # Boltzmann weight tautomers within this level by their free energies
-        G_tautomers = [state_free_energy(ensembles[idx].conformers; T=T)
-                       for idx in level_indices]
+        G_tautomers = [state_free_energy(ensembles[idx].conformers; T=T) for idx in level_indices]
         tautomer_weights = boltzmann_weights(G_tautomers; T=T)
 
         # Distribute the macrostate fraction among tautomers

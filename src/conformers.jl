@@ -1,12 +1,10 @@
-using MoleculeFlow
-using LinearAlgebra
-using Statistics
+using MoleculeFlow, LinearAlgebra, Statistics
 
 function generate_conformers(state::MolecularState;
                              nconfs::Int = 100,
                              optimize::Bool = true,
                              force_field::Symbol = :mmff,
-                             random_seed::Union{Nothing,Int} = nothing,
+                             random_seed::Union{Nothing,Int} = 42,#nothing,
                              rms_threshold::Float64 = 0.5,
                              energy_window_kJmol::Union{Nothing,Float64} = nothing)
 
@@ -30,6 +28,7 @@ function generate_conformers(state::MolecularState;
     converted = Conformer[]
 
     for conf in conformers
+        conf_id = conf.conformer_result.id
 
         # coordinates_3d includes all atoms (including H)
         coords_full = conf.molecule.props[:coordinates_3d]
@@ -38,14 +37,15 @@ function generate_conformers(state::MolecularState;
 
         # Convert kcal/mol → J/mol
         energy_kcal = conf.conformer_result.energy
-        energy = energy_kcal * 4184.0
+        #energy = energy_kcal * 4184.0
+        energy = conf.conformer_result.energy 
 
         push!(converted,
             Conformer(
                 coords_full,
                 all_atomic_numbers,
                 energy,
-                nothing
+                nothing  
             )
         )
     end
@@ -111,22 +111,6 @@ function rmsd(P::Matrix{Float64}, Q::Matrix{Float64})
 end
 
 """
-    select_atoms(conf; heavy_only=true)
-
-Return coordinate matrix filtered by atom type.
-"""
-function select_atoms(conf::Conformer; heavy_only=true)
-
-    if !heavy_only
-        return conf.coordinates
-    end
-
-    mask = conf.atomic_numbers .!= 1
-
-    return conf.coordinates[mask, :]
-end
-
-"""
     prune_by_rms(conformers;
                  threshold=0.5,
                  heavy_only=true)
@@ -158,3 +142,20 @@ function prune_by_rms(conformers::Vector{Conformer};
 
     return kept
 end
+
+
+# """
+#     select_atoms(conf::Conformer; heavy_only=true)
+
+# Return coordinate matrix filtered by atom type.
+# """
+# function select_atoms(conf::Conformer; heavy_only=true)
+
+#     if !heavy_only
+#         return conf.coordinates
+#     end
+
+#     mask = conf.atomic_numbers .!= 1
+
+#     return conf.coordinates[mask, :]
+# end

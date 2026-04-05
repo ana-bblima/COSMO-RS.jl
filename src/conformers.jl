@@ -4,7 +4,7 @@ function generate_conformers(state::MolecularState;
                              nconfs::Int = 100,
                              optimize::Bool = true,
                              force_field::Symbol = :mmff,
-                             random_seed::Union{Nothing,Int} = 42,#nothing,
+                             random_seed::Union{Nothing,Int} = nothing,
                              rms_threshold::Float64 = 0.5,
                              energy_window_kJmol::Union{Nothing,Float64} = nothing)
 
@@ -71,6 +71,17 @@ function generate_conformers(state::MolecularState;
     end
 
     return converted
+end
+
+"""
+    generate_conformers(states::Vector{MolecularState}; kwargs...) -> Vector{StateEnsemble}
+
+Generate conformers for each molecular state, returning a `StateEnsemble` per state.
+All keyword arguments are forwarded to the single-state `generate_conformers`.
+"""
+function generate_conformers(states::Vector{MolecularState}; kwargs...)
+    return [StateEnsemble(state, generate_conformers(state; kwargs...))
+            for state in states]
 end
 
 function filter_energy_window(conformers;

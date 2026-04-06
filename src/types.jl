@@ -9,12 +9,23 @@ struct MolecularState
     multiplicity::Int
 end
 
+# struct Conformer
+#     id::Int
+#     energy::Float64
+#     atomic_numbers::Vector{Int}
+#     coordinates::Matrix{Float64}   # (n_atoms × 3)
+#      sigma_surface_file::Union{Nothing,String}
+        
+# end
+
 struct Conformer
     coordinates::Matrix{Float64}   # (n_atoms × 3)
     atomic_numbers::Vector{Int}
     energy::Float64
     sigma_surface_file::Union{Nothing,String}
 end
+#Base.show(io::IO, c::Conformer) = print(io, "Conformer(id= $(c.id), energy= $(round(c.energy, digits=2)) Kcal/mol, n_atoms= $(length(c.atomic_numbers)), coordinates= $(size(c.coordinates)))")
+
 
 mutable struct SigmaSurface
     seg_area::Vector{Float64}
@@ -44,7 +55,11 @@ end
 struct StateEnsemble
     state::MolecularState
     conformers::Vector{Conformer}
+    gas_energy::Union{Nothing, Float64}  # Hartree, E_gas from def2-TZVPD SP
 end
+
+# Convenience constructor without gas_energy (backwards compatible)
+StateEnsemble(state, conformers) = StateEnsemble(state, conformers, nothing)
 
 ############
 # ORCA ERROR TYPES

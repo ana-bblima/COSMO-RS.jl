@@ -662,6 +662,31 @@ function write_dft_final_input(filepath::String, xyz_filename::String,
     validate_orca_blocks(filepath)
 end
 
+"""
+    write_gas_sp_input(filepath, xyz_filename, charge, multiplicity,
+                       nprocs, maxcore)
+
+Write ORCA input for a gas-phase single-point at BP86/def2-TZVPD.
+Used to compute E_gas on a CPCM-optimised geometry (no geometry optimisation).
+Output base name: `gas_sp_tzvpd`.
+"""
+function write_gas_sp_input(filepath::String, xyz_filename::String,
+                            charge::Int, multiplicity::Int,
+                            nprocs::Int, maxcore::Int)
+    pal_str = nprocs > 1 ? " PAL$nprocs" : ""
+    open(filepath, "w") do io
+        println(io, "%MaxCore $maxcore")
+        println(io)
+        println(io, "! DFT BP86 def2-TZVPD SP$pal_str")
+        println(io)
+        println(io, "%base \"gas_sp_tzvpd\"")
+        println(io)
+        println(io, "* xyzfile $charge $multiplicity $xyz_filename")
+        println(io)
+    end
+    validate_orca_blocks(filepath)
+end
+
 # ----------------------------------------------------------------
 # CPCM / solvation input writers
 # ----------------------------------------------------------------
@@ -953,24 +978,28 @@ end
 
 Run the full COSMO-RS quantum-chemistry workflow for a set of conformers.
 
-## Gas-phase pipeline (produces E_gas reference energy)
-1. **DFT_FAST** — geometry optimisation of every conformer at
-   BP86/def2-TZVP(-f) in the gas phase.
-2. Sort by energy, keep only the lowest-energy conformer.
-3. **DFT_FINAL** — re-optimise at BP86/def2-TZVP (gas), then
-   single-point at BP86/def2-TZVPD.  The SP energy is `E_gas`.
+The CPCM pipeline runs **first** so that all geometry optimisations happen
+in the solvated environment (critical for zwitterions and charged species
+that are unstable in gas phase).  The gas-phase energy is then obtained by
+a single-point on the CPCM-optimised geometry.
 
 ## CPCM pipeline (produces `.orcacosmo` sigma-surface files)
-4. **XTB2_ALPB** — fast solvation pre-screening of the *original*
-   conformers with XTB2/ALPB(water).  Filter to ≤ 3.
-5. **DFT_CPCM_FAST** — CPCM optimisation at BP86/def2-TZVP(-f).
-   Filter to ≤ 1.
-6. **DFT_CPCM_FINAL** — CPCM optimisation at BP86/def2-TZVP, then
+1. **XTB2_ALPB** — fast solvation pre-screening with XTB2/ALPB(water).
+   Filter to ≤ `max_cpcm_conformers_after_xtb` (default 3).
+2. **DFT_CPCM_FAST** — CPCM optimisation at BP86/def2-TZVP(-f).
+   Filter to ≤ `max_cpcm_conformers_after_fast` (default 1).
+3. **DFT_CPCM_FINAL** — CPCM optimisation at BP86/def2-TZVP, then
    single-point at BP86/def2-TZVPD + CPCM.  Produces `.orcacosmo`.
+
+## Gas-phase single point (produces E_gas reference energy)
+4. **Gas SP** — BP86/def2-TZVPD single point on each CPCM-optimised
+   geometry.  This gives `E_gas` for the dielectric energy equation:
+   `E_diel = E_COSMO - E_gas`.
 
 ## Returns
 `NamedTuple` with fields:
-- `gas_energy` — gas-phase energy at BP86/def2-TZVPD (Hartree)
+- `gas_energy` — gas-phase energy at BP86/def2-TZVPD (Hartree), from the
+   lowest-energy CPCM conformer
 - `conformers` — `Vector{Conformer}` with CPCM energies and `.orcacosmo` paths
 
 ## Keyword arguments
@@ -1026,98 +1055,17 @@ function run_cosmo_workflow(
     mol_dir = joinpath(base_dir, state.name)
     mkpath(mol_dir)
 
-    # Keep original conformers for the CPCM pipeline
-    original_conformers = copy(conformers)
-
-    # ============================================================
-    # GAS-PHASE PIPELINE
-    # ============================================================
-
-    gas_energy_hartree = NaN
-
-    if do_geometry_optimization
-        # --- Step 1: DFT_FAST — BP86/def2-TZVP(-f) gas-phase OPT ---
-        @info "[$(state.name)] Gas DFT_FAST — $(length(conformers)) conformers"
-
-        gas_fast_dir = joinpath(mol_dir, "01_gas_dft_fast")
-        gas_fast_conformers = Conformer[]
-
-        for (i, conf) in enumerate(conformers)
-            job_dir = joinpath(gas_fast_dir, "conf_$i")
-            mkpath(job_dir)
-
-            xyz_fn = "input.xyz"
-            write_xyz_file(joinpath(job_dir, xyz_fn), conf.coordinates,
-                           conf.atomic_numbers, "$(state.name) conformer $i")
-
-            inp = joinpath(job_dir, "input.inp")
-            result = run_step_with_retry(inp, orca_path) do opt_kw
-                write_dft_fast_input(inp, xyz_fn, state.charge, state.multiplicity,
-                                     nprocs, maxcore; optimize_kw=opt_kw)
-            end
-
-            opt_coords, _ = parse_xyz_file(joinpath(job_dir, "geo_opt.xyz"))
-            push!(gas_fast_conformers,
-                  Conformer(opt_coords, conf.atomic_numbers,
-                            result.energy * KJMOL_PER_HARTREE, nothing))
-        end
-
-        # Sort by energy, keep only the lowest
-        sort!(gas_fast_conformers, by = c -> c.energy)
-        best = gas_fast_conformers[1]
-        @info "[$(state.name)] Gas DFT_FAST best energy = $(round(best.energy; digits=2)) kJ/mol"
-
-        # --- Step 2: DFT_FINAL — BP86/def2-TZVP OPT + BP86/def2-TZVPD SP ---
-        @info "[$(state.name)] Gas DFT_FINAL — optimise + single point"
-
-        job_dir = joinpath(mol_dir, "02_gas_dft_final", "conf_best")
-        mkpath(job_dir)
-
-        xyz_fn = "input.xyz"
-        write_xyz_file(joinpath(job_dir, xyz_fn), best.coordinates,
-                       best.atomic_numbers, "$(state.name) best conformer")
-
-        inp = joinpath(job_dir, "input.inp")
-        result = run_step_with_retry(inp, orca_path) do opt_kw
-            write_dft_final_input(inp, xyz_fn, state.charge, state.multiplicity,
-                                  nprocs, maxcore; optimize_kw=opt_kw, do_opt=true)
-        end
-
-        gas_energy_hartree = result.energy
-    else
-        # No optimisation — single-point only
-        @info "[$(state.name)] Gas DFT_FINAL — single point (no optimisation)"
-
-        job_dir = joinpath(mol_dir, "02_gas_dft_final", "conf_1")
-        mkpath(job_dir)
-
-        conf = conformers[1]
-        xyz_fn = "input.xyz"
-        write_xyz_file(joinpath(job_dir, xyz_fn), conf.coordinates,
-                       conf.atomic_numbers, state.name)
-
-        inp = joinpath(job_dir, "input.inp")
-        result = run_step_with_retry(inp, orca_path) do opt_kw
-            write_dft_final_input(inp, xyz_fn, state.charge, state.multiplicity,
-                                  nprocs, maxcore; optimize_kw=opt_kw, do_opt=false)
-        end
-
-        gas_energy_hartree = result.energy
-    end
-
-    @info "[$(state.name)] E_gas (def2-TZVPD) = $gas_energy_hartree Hartree"
-
     # ============================================================
     # CPCM PIPELINE
     # ============================================================
 
-    cpcm_conformers = original_conformers
+    cpcm_conformers = conformers
 
     if do_geometry_optimization
-        # --- Step 3: XTB2_ALPB — fast solvation pre-screening ---
-        @info "[$(state.name)] CPCM XTB2_ALPB — $(length(cpcm_conformers)) conformers"
+        # --- Step 1: XTB2_ALPB — fast solvation pre-screening ---
+        @info "[$(state.name)] Step 1: XTB2_ALPB — $(length(cpcm_conformers)) conformers"
 
-        xtb_dir = joinpath(mol_dir, "03_cpcm_xtb2_alpb")
+        xtb_dir = joinpath(mol_dir, "01_cpcm_xtb2_alpb")
         xtb_results = Conformer[]
 
         for (i, conf) in enumerate(cpcm_conformers)
@@ -1156,10 +1104,10 @@ function run_cosmo_workflow(
 
         cpcm_conformers = xtb_results
 
-        # --- Step 4: DFT_CPCM_FAST — BP86/def2-TZVP(-f) + CPCM ---
-        @info "[$(state.name)] CPCM DFT_CPCM_FAST — $(length(cpcm_conformers)) conformers"
+        # --- Step 2: DFT_CPCM_FAST — BP86/def2-TZVP(-f) + CPCM ---
+        @info "[$(state.name)] Step 2: DFT_CPCM_FAST — $(length(cpcm_conformers)) conformers"
 
-        cpcm_fast_dir = joinpath(mol_dir, "04_cpcm_dft_fast")
+        cpcm_fast_dir = joinpath(mol_dir, "02_cpcm_dft_fast")
         cpcm_fast_results = Conformer[]
 
         for (i, conf) in enumerate(cpcm_conformers)
@@ -1200,12 +1148,13 @@ function run_cosmo_workflow(
         cpcm_conformers = cpcm_fast_results
     end
 
-    # --- Step 5: DFT_CPCM_FINAL — BP86/def2-TZVP + CPCM OPT, then
+    # --- Step 3: DFT_CPCM_FINAL — BP86/def2-TZVP + CPCM OPT, then
     #                                BP86/def2-TZVPD + CPCM SP ---
-    @info "[$(state.name)] CPCM DFT_CPCM_FINAL — $(length(cpcm_conformers)) conformers"
+    @info "[$(state.name)] Step 3: DFT_CPCM_FINAL — $(length(cpcm_conformers)) conformers"
 
-    cpcm_final_dir = joinpath(mol_dir, "05_cpcm_dft_final")
+    cpcm_final_dir = joinpath(mol_dir, "03_cpcm_dft_final")
     final_conformers = Conformer[]
+    final_coords_list = Matrix{Float64}[]  # keep CPCM-optimised coords for gas SP
 
     for (i, conf) in enumerate(cpcm_conformers)
         job_dir = joinpath(cpcm_final_dir, "conf_$i")
@@ -1231,6 +1180,7 @@ function run_cosmo_workflow(
         else
             opt_coords = conf.coordinates
         end
+        push!(final_coords_list, opt_coords)
 
         # Assemble .orcacosmo
         structname = "$(state.name)_conf_$i"
@@ -1252,8 +1202,88 @@ function run_cosmo_workflow(
                         result.energy * KJMOL_PER_HARTREE, orcacosmo_path))
     end
 
+    # ============================================================
+    # GAS-PHASE SINGLE POINT on CPCM-optimised geometries
+    # ============================================================
+    # E_gas is needed for: E_diel = E_COSMO - E_gas
+    # We run a gas-phase SP at BP86/def2-TZVPD on each surviving
+    # CPCM conformer's geometry — no gas-phase optimisation, so
+    # zwitterions and charged species remain stable.
+
+    @info "[$(state.name)] Step 4: Gas-phase SP — $(length(final_conformers)) conformer(s)"
+
+    gas_sp_dir = joinpath(mol_dir, "04_gas_sp")
+    gas_energies = Float64[]
+
+    for (i, conf) in enumerate(final_conformers)
+        job_dir = joinpath(gas_sp_dir, "conf_$i")
+        mkpath(job_dir)
+
+        xyz_fn = "input.xyz"
+        write_xyz_file(joinpath(job_dir, xyz_fn), final_coords_list[i],
+                       conf.atomic_numbers, "$(state.name) CPCM-opt conformer $i")
+
+        inp = joinpath(job_dir, "input.inp")
+        write_gas_sp_input(inp, xyz_fn, state.charge, state.multiplicity,
+                           nprocs, maxcore)
+        run_orca_job(inp, orca_path)
+
+        output_file = replace(inp, ".inp" => ".out")
+        gas_result = check_orca_success(output_file)
+        push!(gas_energies, gas_result.energy)
+
+        @info "[$(state.name)] Gas SP conf $i: E_gas = $(gas_result.energy) Ha"
+    end
+
+    # Use the gas energy from the lowest-CPCM-energy conformer as the
+    # representative E_gas (index 1 since conformers are sorted by energy)
+    gas_energy_hartree = gas_energies[1]
+
     @info "[$(state.name)] COSMO workflow complete — " *
           "E_gas=$gas_energy_hartree Ha, $(length(final_conformers)) CPCM conformer(s)"
 
     return (gas_energy = gas_energy_hartree, conformers = final_conformers)
+end
+
+
+"""
+    run_cosmo_workflow(ensembles::Vector{StateEnsemble}; kwargs...)
+        -> Vector{StateEnsemble}
+
+Run the full COSMO-RS workflow for multiple molecular states and return
+updated `StateEnsemble`s with CPCM-computed conformers (including `.orcacosmo` paths).
+
+This is the top-level entry point for amino acids and other multi-state molecules.
+After calling this, the returned ensembles can be passed directly to
+`average_over_states` or `state_population_weights_pH`.
+
+## Example
+```julia
+states = generate_states("glycine")
+ensembles = generate_conformers(states; nconfs=50)
+
+# Run COSMO for all states
+ensembles = run_cosmo_workflow(ensembles;
+    base_dir="glycine_cosmo", nprocs=2, maxcore=2000,
+    orca_path="/path/to/orca")
+
+# Boltzmann-weighted sigma profile across all states and conformers
+profile = average_over_states(ensembles)
+
+# Or pH-dependent weighting
+weights = state_population_weights_pH(ensembles, "glycine", 7.4)
+```
+
+All keyword arguments are forwarded to the single-state `run_cosmo_workflow`.
+"""
+function run_cosmo_workflow(ensembles::Vector{StateEnsemble}; kwargs...)
+    updated = StateEnsemble[]
+
+    for ens in ensembles
+        @info "Running COSMO workflow for state: $(ens.state.name) (charge=$(ens.state.charge))"
+        result = run_cosmo_workflow(ens.conformers, ens.state; kwargs...)
+        push!(updated, StateEnsemble(ens.state, result.conformers, result.gas_energy))
+    end
+
+    return updated
 end

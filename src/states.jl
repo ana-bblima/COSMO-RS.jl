@@ -73,6 +73,20 @@ const AMINO_ACID_STATES = Dict{String, Vector{MolecularState}}(
         MolecularState("deprotonated", "NCC(=O)[O-]",         -1, 1),
     ],
 
+    "diglycine" => [
+        MolecularState("neutral",      "NCC(=O)NCC(=O)O",             0, 1),
+        MolecularState("zwitterion",   "[NH3+]CC(=O)NCC(=O)[O-]",     0, 1),
+        MolecularState("protonated",   "[NH3+]CC(=O)NCC(=O)O",        1, 1),
+        MolecularState("deprotonated", "NCC(=O)NCC(=O)[O-]",         -1, 1),
+    ],
+
+    "triglycine" => [
+        MolecularState("neutral",      "NCC(=O)NCC(=O)NCC(=O)O",             0, 1),
+        MolecularState("zwitterion",   "[NH3+]CC(=O)NCC(=O)NCC(=O)[O-]",     0, 1),
+        MolecularState("protonated",   "[NH3+]CC(=O)NCC(=O)NCC(=O)O",        1, 1),
+        MolecularState("deprotonated", "NCC(=O)NCC(=O)NCC(=O)[O-]",         -1, 1),
+    ],
+
     "alanine" => [
         MolecularState("neutral",      "CC(N)C(=O)O",                 0, 1),
         MolecularState("zwitterion",   "CC([NH3+])C(=O)[O-]",         0, 1),

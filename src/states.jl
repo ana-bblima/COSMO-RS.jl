@@ -15,6 +15,8 @@
 # Three-letter code -> full name
 const AMINO_ACID_THREE_TO_FULL = Dict{String,String}(
     "gly" => "glycine",
+    "dgly" => "diglycine",
+    "tgly" => "triglycine",
     "ala" => "alanine",
     "val" => "valine",
     "leu" => "leucine",

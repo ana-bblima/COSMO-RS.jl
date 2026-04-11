@@ -1,0 +1,41 @@
+%MaxCore 2000
+
+%base "geo_opt"
+%cpcm
+radius[1]  1.3
+radius[2]  1.601
+radius[5]  2.048
+radius[6]  2.0
+radius[7]  1.83
+radius[8]  1.72
+radius[9]  1.72
+radius[10]  1.771
+radius[13]  2.152
+radius[14]  2.2
+radius[15]  2.106
+radius[16]  2.16
+radius[17]  2.05
+radius[18]  2.184
+radius[22]  2.261
+radius[26]  2.195
+radius[27]  2.153
+radius[31]  2.172
+radius[32]  2.7
+radius[33]  2.148
+radius[34]  2.2
+radius[35]  2.16
+radius[36]  2.354
+radius[49]  2.245
+radius[50]  2.55
+radius[51]  2.402
+radius[53]  2.32
+radius[54]  2.524
+radius[80]  1.978
+radius[82]  2.36
+radius[86]  2.573
+end
+
+! DFT OPT CPCM BP86 def2-TZVP(-f) PAL5
+
+* xyzfile 0 1 input.xyz
+

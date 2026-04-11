@@ -1,0 +1,8 @@
+%MaxCore 2000
+
+! DFT BP86 def2-TZVPD SP PAL5
+
+%base "gas_sp_tzvpd"
+
+* xyzfile 0 1 input.xyz
+

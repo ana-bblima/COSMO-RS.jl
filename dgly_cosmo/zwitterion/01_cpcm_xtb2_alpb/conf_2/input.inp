@@ -1,8 +1,0 @@
-%MaxCore 2000
-
-! XTB2 OPT ALPB(water)
-
-%base "geo_opt"
-
-* xyzfile 0 1 input.xyz
-
